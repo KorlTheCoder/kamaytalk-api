@@ -1,0 +1,9 @@
+# Verified together on Python 3.11 (pip check clean)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+numpy<2
+mediapipe==0.10.14            # also installs opencv-contrib-python (provides cv2)
+protobuf==4.25.3              # MediaPipe needs protobuf<5
+google-cloud-firestore==2.19.0   # newer versions need protobuf>=5 and break MediaPipe
+redis>=5
+ai-edge-litert>=1.0

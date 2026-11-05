@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KamayTalk Admin</title>
+<style>
+  :root { --bg:#0f1115; --fg:#f2f4f8; --mut:#9aa3b2; --acc:#4fd1a5; --card:#1a1e26; --line:#2b3140; --warn:#f5a524; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --fg:#14171c; --mut:#5b6472; --card:#fff; --line:#dfe3ea; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; color: var(--mut); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .chips span { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; margin-right:6px; font-size:13px; }
+  .ok { color: var(--acc); } .err { color: var(--bad); } .off { color: var(--mut); }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom: 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom: 12px; }
+  .stat b { display:block; font-size: 26px; }
+  .stat span { color: var(--mut); font-size: 13px; }
+  table { width:100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align: top; }
+  th { color: var(--mut); font-weight: 600; }
+  .scroll { max-height: 320px; overflow:auto; }
+  button, a.btn { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 12px; font:inherit; cursor:pointer; text-decoration:none; display:inline-block; }
+  button.on { background: var(--acc); color:#04281d; border-color: var(--acc); font-weight:700; }
+  textarea { width:100%; min-height: 150px; background:transparent; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px; font: 13.5px/1.5 ui-monospace, monospace; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .two { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; } @media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>KamayTalk Admin</h1>
+    <div class="chips" id="status"></div>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <b>Test round being recorded:</b>
+      <button id="r1">Round 1</button>
+      <button id="r2">Round 2</button>
+      <span class="off">New events and feedback are tagged with this round. Switch to Round 2 after you improve the app.</span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <b>Viewing:</b>
+      <button id="v1">Round 1</button>
+      <button id="v2">Round 2</button>
+      <button id="vall">Both</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card stat"><b id="sWords">–</b><span>words recognised</span></div>
+    <div class="card stat"><b id="sSent">–</b><span>sentences</span></div>
+    <div class="card stat"><b id="sUnsure">–</b><span>unsure guesses</span></div>
+    <div class="card stat"><b id="sFb">–</b><span>feedback forms</span></div>
+    <div class="card stat"><b id="sRate">–</b><span>avg rating (1–5)</span></div>
+    <div class="card stat"><b id="sActive">–</b><span>testers active now</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Summary to paste into your report (Output 04 / 06)</h2>
+    <textarea id="report" readonly></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="copy">Copy</button>
+      <a class="btn" id="expFb" href="#">Download feedback CSV</a>
+      <a class="btn" id="expEv" href="#">Download events CSV</a>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h2>Live testers</h2>
+      <div class="scroll"><table><thead><tr><th>Session</th><th>Client</th><th>Mode</th><th>Now showing</th></tr></thead><tbody id="live"></tbody></table></div>
+    </div>
+    <div class="card">
+      <h2>Most recognised words</h2>
+      <div class="scroll"><table><thead><tr><th>Word</th><th>Count</th></tr></thead><tbody id="top"></tbody></table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recent events</h2>
+    <div class="scroll"><table><thead><tr><th>Time</th><th>Round</th><th>Kind</th><th>Text</th><th>Conf.</th><th>Client</th></tr></thead><tbody id="events"></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Tester feedback</h2>
+    <div class="scroll"><table><thead><tr><th>Time</th><th>Rd</th><th>Rating</th><th>Would use?</th><th>Liked</th><th>Confused</th><th>Comment</th></tr></thead><tbody id="fb"></tbody></table></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let view = null;            // null = current round, 'all' = both, number = specific
+let currentRound = 1;
+
+// Everything coming from testers is untrusted text: only ever use textContent.
+function fill(tbody, rows) {
+  tbody.replaceChildren();
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    for (const v of r) { const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+}
+const q = () => '?round=' + (view === 'all' ? 0 : (view ?? currentRound));
+const j = async u => { const r = await fetch(u); if (!r.ok) throw new Error(u + ' ' + r.status); return r.json(); };
+
+function chip(label, val) {
+  const s = document.createElement('span');
+  const cls = val === 'connected' ? 'ok' : String(val).startsWith('error') ? 'err' : 'off';
+  s.className = cls; s.textContent = label + ': ' + (val === 'off' ? 'off' : String(val).slice(0, 60));
+  return s;
+}
+
+function buildReport(sm) {
+  const f = sm.feedback, c = sm.counts, w = f.would_use;
+  const total = w.yes + w.maybe + w.no;
+  const pct = n => total ? Math.round(100 * n / total) + '%' : '–';
+  const lines = [];
+  const label = sm.round === 0 ? 'All test rounds combined' : `Test round ${sm.round}`;
+  lines.push(`${label}: ${f.n} tester${f.n === 1 ? '' : 's'} gave feedback; the prototype recognised ${c.word} signs/words and built ${c.sentence} sentences (${c.unsure} guesses were rejected as unsure).`);
+  lines.push(`Average rating: ${f.avg_rating ?? 'n/a'} / 5.`);
+  lines.push(`Would use it: yes ${w.yes} (${pct(w.yes)}), maybe ${w.maybe} (${pct(w.maybe)}), no ${w.no} (${pct(w.no)}).`);
+  if (f.liked.length) lines.push('\nWhat testers liked:\n- ' + f.liked.slice(0, 10).join('\n- '));
+  if (f.confused.length) lines.push('\nWhat confused testers:\n- ' + f.confused.slice(0, 10).join('\n- '));
+  if (sm.top_words.length) lines.push('\nMost recognised signs: ' + sm.top_words.slice(0, 8).map(t => `${t.word} (${t.n})`).join(', '));
+  return lines.join('\n');
+}
+
+async function refresh() {
+  try {
+    const sm = await j('/admin/api/summary' + q());
+    currentRound = sm.current_round;
+    $('r1').classList.toggle('on', currentRound === 1); $('r2').classList.toggle('on', currentRound === 2);
+    const vv = view === 'all' ? 'all' : (view ?? currentRound);
+    $('v1').classList.toggle('on', vv === 1); $('v2').classList.toggle('on', vv === 2); $('vall').classList.toggle('on', vv === 'all');
+    $('status').replaceChildren(chip('Redis', sm.status.redis), chip('Firestore', sm.status.firestore), chip('Local files', 'connected'));
+    $('sWords').textContent = sm.counts.word; $('sSent').textContent = sm.counts.sentence; $('sUnsure').textContent = sm.counts.unsure;
+    $('sFb').textContent = sm.counts.feedback; $('sRate').textContent = sm.feedback.avg_rating ?? '–'; $('sActive').textContent = sm.active_sessions;
+    fill($('top'), sm.top_words.map(t => [t.word, t.n]));
+    if (document.activeElement !== $('report')) $('report').value = buildReport(sm);
+    const rq = '&round=' + (view === 'all' ? 0 : (view ?? currentRound));
+    const [ev, fb, live] = await Promise.all([j('/admin/api/events?limit=60' + rq), j('/admin/api/feedback' + q()), j('/admin/api/sessions')]);
+    fill($('events'), ev.map(e => [e.ts.replace('T', ' ').slice(0, 19), e.round, e.kind, e.text, e.confidence, e.client]));
+    fill($('fb'), fb.map(x => [x.ts.replace('T', ' ').slice(0, 19), x.round, x.rating, x.would_use, x.liked, x.confused, x.comment]));
+    fill($('live'), live.map(s => [s.sid.slice(0, 12), s.client, s.mode, (s.sentences || []).slice(-1).concat(s.subtitle ? ['… ' + s.subtitle] : []).join('  ')]));
+    $('expFb').href = '/admin/export/feedback.csv' + q(); $('expEv').href = '/admin/export/events.csv' + q();
+  } catch (e) { $('status').textContent = 'Error: ' + e.message; }
+}
+
+async function setRound(n) { await fetch('/admin/api/round', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({round:n}) }); currentRound = n; view = null; refresh(); }
+$('r1').onclick = () => setRound(1); $('r2').onclick = () => setRound(2);
+$('v1').onclick = () => { view = 1; refresh(); }; $('v2').onclick = () => { view = 2; refresh(); }; $('vall').onclick = () => { view = 'all'; refresh(); };
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('report').value); $('copy').textContent = 'Copied'; } catch { $('report').select(); } setTimeout(() => $('copy').textContent = 'Copy', 1500); };
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

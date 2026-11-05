@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KamayTalk Web Test</title>
+<style>
+  :root { --bg:#0f1115; --fg:#f2f4f8; --mut:#9aa3b2; --acc:#4fd1a5; --card:#1a1e26; --warn:#f5a524; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --fg:#14171c; --mut:#5b6472; --card:#fff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui,sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 12px; color: var(--mut); font-size: 14px; }
+  .stage { position: relative; background:#000; border-radius: 12px; overflow: hidden; aspect-ratio: 4/3; }
+  video { width:100%; height:100%; object-fit: cover; transform: scaleX(-1); }
+  .subs { position:absolute; left:0; right:0; bottom:0; padding:12px 14px; min-height:56px;
+          background: linear-gradient(transparent, rgba(0,0,0,.85)); color:#fff; font-size: 22px; font-weight: 600; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin: 12px 0; align-items:center; }
+  button { background:var(--card); color:var(--fg); border:1px solid #3a4150; border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  button.on { background: var(--acc); color:#04281d; border-color: var(--acc); font-weight:600; }
+  .card { background:var(--card); border-radius:10px; padding:10px 12px; margin:8px 0; font-size:14px; }
+  .chips span { display:inline-block; background:#2a3040; color:#dfe6f3; border-radius:999px; padding:2px 10px; margin:2px; font-size:13px; }
+  .mut { color: var(--mut); }
+  .warn { color: var(--warn); }
+  .stars button { font-size: 20px; padding: 4px 10px; }
+  .stars button.on { background: var(--acc); color:#04281d; border-color: var(--acc); }
+  details.card summary { cursor: pointer; font-weight: 600; }
+  label.blk { display:block; margin-top:10px; font-size: 14px; }
+  textarea, input[type=text] { width:100%; margin-top:4px; background:transparent; color:var(--fg); border:1px solid #3a4150; border-radius:8px; padding:8px; font:inherit; }
+  .sents div { padding: 2px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>KamayTalk Web Test</h1>
+  <p class="sub">Same API the Flutter app uses. Allow the camera, sign with both hands in view.</p>
+
+  <div class="stage">
+    <video id="v" autoplay playsinline muted></video>
+    <div class="subs" id="subs">…</div>
+  </div>
+
+  <div class="row">
+    <button id="mWords" class="on">Words</button>
+    <button id="mLetters">Letters (A–Z)</button>
+    <button id="reset">Clear</button>
+    <label><input type="checkbox" id="tts" checked> Speak</label>
+    <label><input type="checkbox" id="sayS"> whole sentences</label>
+  </div>
+
+  <div class="card sents" id="sentCard" hidden><div class="mut">Sentences</div><div id="sents"></div></div>
+
+  <div class="card" id="status">Connecting…</div>
+  <div class="card chips" id="vocab" hidden></div>
+  <div class="card mut" id="live">Live guess: –</div>
+
+  <details class="card" id="fbBox">
+    <summary>Tell us what you think (takes 30 seconds)</summary>
+    <div style="margin-top:8px">Overall rating</div>
+    <div class="stars row" id="stars"></div>
+    <label class="blk">What did you like?<textarea id="fbLiked" rows="2" maxlength="500"></textarea></label>
+    <label class="blk">What confused you?<textarea id="fbConf" rows="2" maxlength="500"></textarea></label>
+    <div style="margin-top:10px">Would you actually use this?</div>
+    <div class="row" id="would">
+      <button data-v="yes">Yes</button><button data-v="maybe">Maybe</button><button data-v="no">No</button>
+    </div>
+    <label class="blk">Anything else? (optional)<textarea id="fbComm" rows="2" maxlength="500"></textarea></label>
+    <div class="row" style="margin-top:10px"><button id="fbSend" class="on">Send feedback</button><span id="fbMsg" class="mut"></span></div>
+  </details>
+
+  <p class="mut" style="font-size:13px">Privacy: your camera image is processed live and <b>never saved</b>. We only keep the recognised words and the feedback you submit.</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const sid = 'web-' + Math.random().toString(36).slice(2, 8);
+let mode = 'words', running = true, frames = 0, t0 = performance.now();
+const cv = document.createElement('canvas'); cv.width = 320; cv.height = 240;
+const ctx = cv.getContext('2d');
+
+function setMode(m) {
+  mode = m;
+  $('mWords').classList.toggle('on', m === 'words');
+  $('mLetters').classList.toggle('on', m === 'letters');
+  $('vocab').hidden = m !== 'words';
+}
+$('mWords').onclick = () => setMode('words');
+$('mLetters').onclick = () => setMode('letters');
+$('reset').onclick = async () => { await fetch('/v1/reset?session=' + sid, {method:'POST'}); $('subs').textContent = '…'; };
+
+function speak(t) {
+  if (!t || !$('tts').checked || !window.speechSynthesis) return;
+  speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+}
+
+async function boot() {
+  const h = await (await fetch('/health')).json();
+  $('status').textContent = h.words_ready ? 'API connected. Word model loaded.'
+    : 'API connected. Word model NOT loaded (' + h.words_error + '). Letters mode only.';
+  if (h.word_vocab.length) {
+    $('vocab').innerHTML = '<div class="mut">Signs it can recognise (' + h.word_vocab_mode + ' vocabulary):</div>' +
+      h.word_vocab.map(w => '<span>' + w + '</span>').join('');
+    $('vocab').hidden = mode !== 'words';
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: false });
+    $('v').srcObject = stream;
+  } catch (e) {
+    $('status').innerHTML += '<br><span class="warn">Camera error: ' + e.message + ' (camera needs localhost or HTTPS)</span>';
+    return;
+  }
+  loop();
+}
+
+async function loop() {
+  const v = $('v');
+  while (running) {
+    if (v.videoWidth) {
+      ctx.drawImage(v, 0, 0, cv.width, cv.height);          // raw (unmirrored) frame; the server mirrors like the upstream demos
+      const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.7));
+      try {
+        const r = await fetch(`/v1/frame?session=${sid}&mode=${mode}&fmt=jpeg&client=web&say=${$('sayS').checked ? 'sentence' : 'word'}`, { method: 'POST', body: blob });
+        const j = await r.json();
+        if (!r.ok) { $('status').innerHTML = '<span class="warn">' + (j.detail || r.status) + '</span>'; await new Promise(r => setTimeout(r, 1000)); continue; }
+        $('subs').textContent = j.subtitle || '…';
+        const hands = (j.hands.left ? 'L' : '') + (j.hands.right ? 'R' : '') || 'none';
+        $('live').textContent = 'Hands: ' + hands + ' · buffered: ' + j.buffered +
+          (j.live ? ' · guess: ' + j.live.label + ' (' + Math.round(j.live.confidence * 100) + '%)' + (j.accepted === true ? ' ✓' : j.accepted === false ? ' ✗ unsure' : '') : '') +
+          (j.top3 && j.top3.length ? ' · top3: ' + j.top3.map(t => t.word + ' ' + Math.round(t.confidence * 100) + '%').join(', ') : '');
+        if (j.sentences && j.sentences.length) { $('sentCard').hidden = false; $('sents').replaceChildren(...j.sentences.map(t => { const d = document.createElement('div'); d.textContent = '• ' + t; return d; })); }
+        else { $('sentCard').hidden = true; }
+        if (j.speak) speak(j.speak);
+        frames++;
+        const fps = frames / ((performance.now() - t0) / 1000);
+        $('status').textContent = 'Running · ' + fps.toFixed(1) + ' fps · session ' + sid;
+      } catch (e) {
+        $('status').innerHTML = '<span class="warn">Request failed: ' + e.message + '</span>';
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } else { await new Promise(r => setTimeout(r, 100)); }
+  }
+}
+
+// ---- feedback form ----
+let rating = null, would = null;
+for (let i = 1; i <= 5; i++) { const b = document.createElement('button'); b.textContent = '★'; b.title = i + ' / 5'; b.onclick = () => { rating = i; [...$('stars').children].forEach((x, k) => x.classList.toggle('on', k < i)); }; $('stars').appendChild(b); }
+document.querySelectorAll('#would button').forEach(b => b.onclick = () => { would = b.dataset.v; document.querySelectorAll('#would button').forEach(x => x.classList.toggle('on', x === b)); });
+$('fbSend').onclick = async () => {
+  const body = { session: sid, client: 'web', rating, would_use: would, liked: $('fbLiked').value, confused: $('fbConf').value, comment: $('fbComm').value };
+  try {
+    const r = await fetch('/v1/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    $('fbMsg').textContent = r.ok ? 'Thank you! 🙏' : (typeof j.detail === 'string' ? j.detail : 'Please check your answers');
+    if (r.ok) $('fbSend').disabled = true;
+  } catch (e) { $('fbMsg').textContent = 'Could not send: ' + e.message; }
+};
+boot();
+</script>
+</body>
+</html>
